@@ -1,0 +1,221 @@
+<!doctype html>
+<html>
+<head>
+  <script>
+    try {
+      window.localStorage.getItem('x')
+    } catch (e) {
+      const store = new Map()
+      const shim = {
+        getItem: (k) => (store.has(k) ? store.get(k) : null),
+        setItem: (k, v) => {
+          store.set(k, String(v))
+        },
+        removeItem: (k) => {
+          store.delete(k)
+        },
+        clear: () => {
+          store.clear()
+        },
+        key: (i) => Array.from(store.keys())[i] ?? null,
+        get length() {
+          return store.size
+        },
+      }
+      Object.defineProperty(window, 'localStorage', { value: shim, configurable: true })
+    }
+  </script>
+  <style>
+    html, body { margin: 0; padding: 0; height: auto; min-height: 0; }
+    #plugin-root { height: auto; }
+    body { display: block; }
+    body > #plugin-root > fig-footer {
+      background-color: var(--figma-color-bg);
+      box-shadow: inset 0 1px 0 0 var(--figma-color-border);
+      border-radius: 0 0 var(--radius-large) var(--radius-large);
+    }
+    dialog.fig-fill-picker-dialog {
+      width: 300px;
+      max-width: 300px;
+      min-width: 300px;
+      max-height: none;
+      height: max-content;
+    }
+  </style>
+</head>
+<body>
+  <div id="plugin-root">
+    <fig-content>
+      <fig-group name="Settings">
+    <fig-field>
+      <label>URL link</label>
+      <fig-input-text id="urlLink" value="/product/"></fig-input-text>
+    </fig-field>
+      </fig-group>
+    </fig-content>
+    <fig-footer>
+      <label id="status-apply"></label>
+      <fig-button id="action-apply" type="submit" disabled>Apply data</fig-button>
+      <fig-button id="action-read" type="submit" disabled>Read data</fig-button>
+    </fig-footer>
+  </div>
+  <script>
+    let lastReportedHeight = 0
+    let resizeRaf = 0
+
+    function measurePanelHeight() {
+      const root = document.getElementById('plugin-root')
+      if (!root) return 0
+      let h = Math.ceil(root.getBoundingClientRect().height)
+      const openDialog = document.querySelector('dialog.fig-fill-picker-dialog[open]')
+      if (openDialog) h = Math.max(h, Math.ceil(openDialog.getBoundingClientRect().bottom))
+      return h
+    }
+
+    function reportHeight() {
+      const h = measurePanelHeight()
+      if (h && h !== lastReportedHeight) {
+        lastReportedHeight = h
+        parent.postMessage({ pluginMessage: { type: 'resize', height: h } }, '*')
+      }
+    }
+
+    const pluginRoot = document.getElementById('plugin-root')
+    if (pluginRoot && typeof ResizeObserver !== 'undefined') {
+      new ResizeObserver(() => {
+        if (resizeRaf) cancelAnimationFrame(resizeRaf)
+        resizeRaf = requestAnimationFrame(reportHeight)
+      }).observe(pluginRoot)
+    }
+
+    new MutationObserver(() => {
+      if (resizeRaf) cancelAnimationFrame(resizeRaf)
+      resizeRaf = requestAnimationFrame(reportHeight)
+    }).observe(document.body, {
+      childList: true,
+      attributes: true,
+      attributeFilter: ['open'],
+      subtree: true,
+    })
+
+    function colorValue(id) {
+      const value = document.getElementById(id).value
+      const hex = String(value || '#000000FF').replace('#', '')
+      const read = (start, fallback) => {
+        const slice = hex.slice(start, start + 2)
+        const parsed = Number.parseInt(slice, 16)
+        return Number.isFinite(parsed) ? parsed / 255 : fallback
+      }
+      return { r: read(0, 0), g: read(2, 0), b: read(4, 0), a: hex.length >= 8 ? read(6, 1) : 1 }
+    }
+
+    function colorToHex(value) {
+      const color = typeof value === 'object' && value !== null ? value : {}
+      const channel = (component, fallback) => {
+        const numeric = Number(component)
+        return Math.round(Math.max(0, Math.min(1, Number.isFinite(numeric) ? numeric : fallback)) * 255)
+          .toString(16)
+          .padStart(2, '0')
+          .toUpperCase()
+      }
+      return '#' + channel(color.r, 0) + channel(color.g, 0) + channel(color.b, 0) + channel(color.a, 1)
+    }
+
+    function gradientToControlValueJson(value) {
+      const g = typeof value === 'object' && value !== null ? value : {}
+      const stops = Array.isArray(g.stops) ? g.stops : []
+      const pct = (n) => Math.round(Math.max(0, Math.min(1, Number(n))) * 100)
+      return JSON.stringify({
+        type: 'gradient',
+        gradient: {
+          type: g.type || 'linear',
+          angle: Number.isFinite(Number(g.angle)) ? Number(g.angle) : 0,
+          stops: stops.map((s) => ({
+            position: pct(s.position),
+            color: colorToHex(s.color).slice(0, 7),
+            opacity: pct(s.color && s.color.a),
+          })),
+        },
+      })
+    }
+
+    function hasParam(values, name) {
+      return Object.prototype.hasOwnProperty.call(values, name)
+    }
+
+    function setControlValue(id, value) {
+      const input = document.getElementById(id)
+      if (!input) return
+      const next = String(value)
+      input.value = next
+      input.setAttribute('value', next)
+    }
+
+    function setControlChecked(id, value) {
+      const input = document.getElementById(id)
+      if (!input) return
+      input.checked = Boolean(value)
+      if (input.checked) {
+        input.setAttribute('checked', '')
+      } else {
+        input.removeAttribute('checked')
+      }
+    }
+
+    function setPanelParams(values) {
+      if (typeof values !== 'object' || values === null) return
+      if (hasParam(values, "urlLink")) setControlValue("urlLink", values.urlLink)
+    }
+
+    function currentParams() {
+      return {
+        urlLink: String(document.getElementById('urlLink').value),
+      }
+    }
+    document.getElementById('action-apply').addEventListener('click', () => {
+      parent.postMessage({ pluginMessage: { type: 'action', id: "apply", params: currentParams() } }, '*')
+    })
+    document.getElementById('action-read').addEventListener('click', () => {
+      parent.postMessage({ pluginMessage: { type: 'action', id: "read", params: currentParams() } }, '*')
+    })
+
+    window.onmessage = (event) => {
+      const msg = event.data && event.data.pluginMessage
+      if (!msg) return
+      if (msg.type === 'params-change') {
+        setPanelParams(msg.params)
+        return
+      }
+    }
+
+
+    window.addEventListener('message', (event) => {
+      const msg = event.data && event.data.pluginMessage
+      if (!msg || msg.type !== 'action-state' || !msg.actions) return
+      {
+        const a = msg.actions["apply"]
+        const button = document.getElementById('action-apply')
+        if (a && button) {
+          if (a.enabled === false) button.setAttribute('disabled', '')
+          else button.removeAttribute('disabled')
+          if (typeof a.label === 'string') button.textContent = a.label
+        }
+        const status = document.getElementById('status-apply')
+        if (a && status && typeof a.status === 'string') status.textContent = a.status
+      }
+      {
+        const a = msg.actions["read"]
+        const button = document.getElementById('action-read')
+        if (a && button) {
+          if (a.enabled === false) button.setAttribute('disabled', '')
+          else button.removeAttribute('disabled')
+          if (typeof a.label === 'string') button.textContent = a.label
+        }
+        const status = document.getElementById('status-read')
+        if (a && status && typeof a.status === 'string') status.textContent = a.status
+      }
+    })
+
+  </script>
+</body>
+</html>
