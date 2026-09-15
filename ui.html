@@ -1,221 +1,204 @@
 <!doctype html>
 <html>
 <head>
-  <script>
-    try {
-      window.localStorage.getItem('x')
-    } catch (e) {
-      const store = new Map()
-      const shim = {
-        getItem: (k) => (store.has(k) ? store.get(k) : null),
-        setItem: (k, v) => {
-          store.set(k, String(v))
-        },
-        removeItem: (k) => {
-          store.delete(k)
-        },
-        clear: () => {
-          store.clear()
-        },
-        key: (i) => Array.from(store.keys())[i] ?? null,
-        get length() {
-          return store.size
-        },
-      }
-      Object.defineProperty(window, 'localStorage', { value: shim, configurable: true })
-    }
-  </script>
   <style>
-    html, body { margin: 0; padding: 0; height: auto; min-height: 0; }
-    #plugin-root { height: auto; }
-    body { display: block; }
-    body > #plugin-root > fig-footer {
-      background-color: var(--figma-color-bg);
-      box-shadow: inset 0 1px 0 0 var(--figma-color-border);
-      border-radius: 0 0 var(--radius-large) var(--radius-large);
+    html, body {
+      margin: 0;
+      padding: 0;
+      font-family: Inter, "Helvetica Neue", Helvetica, Arial, sans-serif;
+      font-size: 11px;
+      color: var(--figma-color-text, #333);
+      background: var(--figma-color-bg, #fff);
     }
-    dialog.fig-fill-picker-dialog {
-      width: 300px;
-      max-width: 300px;
-      min-width: 300px;
-      max-height: none;
-      height: max-content;
+    * { box-sizing: border-box; }
+
+    .content {
+      padding: 12px 12px 8px;
+    }
+
+    .field {
+      margin-bottom: 8px;
+    }
+
+    .field label {
+      display: block;
+      font-size: 11px;
+      font-weight: 600;
+      margin-bottom: 4px;
+      color: var(--figma-color-text, #333);
+    }
+
+    .field input[type="text"] {
+      width: 100%;
+      padding: 6px 8px;
+      font-size: 11px;
+      font-family: inherit;
+      border: 1px solid var(--figma-color-border, #d4d4d4);
+      border-radius: 6px;
+      background: var(--figma-color-bg, #fff);
+      color: var(--figma-color-text, #333);
+      outline: none;
+    }
+
+    .field input[type="text"]:focus {
+      border-color: var(--figma-color-bg-brand, #0d99ff);
+      box-shadow: 0 0 0 1px var(--figma-color-bg-brand, #0d99ff);
+    }
+
+    .footer {
+  flex-wrap: wrap;          /* hyphen + semicolon */
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--figma-color-border, #e5e5e5);
+}
+
+.footer .status {
+  width: 100%;              /* semicolon */
+  font-size: 11px;
+  color: var(--figma-color-text-secondary, #333);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: block;
+  margin-bottom: 12px;
+}
+
+
+    .footer button {
+      padding: 6px 12px;
+      font-size: 11px;
+      font-family: inherit;
+      font-weight: 500;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    .footer button.primary {
+      background: var(--figma-color-bg-brand, #0d99ff);
+      color: #fff;
+    }
+
+    .footer button.primary:hover {
+      opacity: 0.9;
+    }
+
+    .footer button.secondary {
+      background: var(--figma-color-bg-secondary, #f0f0f0);
+      color: var(--figma-color-text, #333);
+    }
+
+    .footer button.secondary:hover {
+      opacity: 0.85;
+    }
+
+    .footer button:disabled {
+      opacity: 0.4;
+      cursor: default;
     }
   </style>
 </head>
 <body>
-  <div id="plugin-root">
-    <fig-content>
-      <fig-group name="Settings">
-    <fig-field>
+  <div class="content">
+    <div class="field">
+      <p>Select a Figma layer and enter a URL link:</p>
       <label>URL link</label>
-      <fig-input-text id="urlLink" value="/product/"></fig-input-text>
-    </fig-field>
-      </fig-group>
-    </fig-content>
-    <fig-footer>
-      <label id="status-apply"></label>
-      <fig-button id="action-apply" type="submit" disabled>Apply data</fig-button>
-      <fig-button id="action-read" type="submit" disabled>Read data</fig-button>
-    </fig-footer>
+      <input type="text" id="urlLink" value="/product/" />
+    </div>
   </div>
+  <div class="footer">
+    <span class="status" id="status-apply"></span>
+    <button class="secondary" id="action-remove" disabled>Remove link</button>
+    <button class="secondary" id="action-read" disabled>Read data</button>
+    <button class="primary" id="action-apply" disabled>Apply data</button>
+  </div>
+
   <script>
-    let lastReportedHeight = 0
-    let resizeRaf = 0
-
-    function measurePanelHeight() {
-      const root = document.getElementById('plugin-root')
-      if (!root) return 0
-      let h = Math.ceil(root.getBoundingClientRect().height)
-      const openDialog = document.querySelector('dialog.fig-fill-picker-dialog[open]')
-      if (openDialog) h = Math.max(h, Math.ceil(openDialog.getBoundingClientRect().bottom))
-      return h
-    }
-
-    function reportHeight() {
-      const h = measurePanelHeight()
-      if (h && h !== lastReportedHeight) {
-        lastReportedHeight = h
-        parent.postMessage({ pluginMessage: { type: 'resize', height: h } }, '*')
-      }
-    }
-
-    const pluginRoot = document.getElementById('plugin-root')
-    if (pluginRoot && typeof ResizeObserver !== 'undefined') {
-      new ResizeObserver(() => {
-        if (resizeRaf) cancelAnimationFrame(resizeRaf)
-        resizeRaf = requestAnimationFrame(reportHeight)
-      }).observe(pluginRoot)
-    }
-
-    new MutationObserver(() => {
-      if (resizeRaf) cancelAnimationFrame(resizeRaf)
-      resizeRaf = requestAnimationFrame(reportHeight)
-    }).observe(document.body, {
-      childList: true,
-      attributes: true,
-      attributeFilter: ['open'],
-      subtree: true,
-    })
-
-    function colorValue(id) {
-      const value = document.getElementById(id).value
-      const hex = String(value || '#000000FF').replace('#', '')
-      const read = (start, fallback) => {
-        const slice = hex.slice(start, start + 2)
-        const parsed = Number.parseInt(slice, 16)
-        return Number.isFinite(parsed) ? parsed / 255 : fallback
-      }
-      return { r: read(0, 0), g: read(2, 0), b: read(4, 0), a: hex.length >= 8 ? read(6, 1) : 1 }
-    }
-
-    function colorToHex(value) {
-      const color = typeof value === 'object' && value !== null ? value : {}
-      const channel = (component, fallback) => {
-        const numeric = Number(component)
-        return Math.round(Math.max(0, Math.min(1, Number.isFinite(numeric) ? numeric : fallback)) * 255)
-          .toString(16)
-          .padStart(2, '0')
-          .toUpperCase()
-      }
-      return '#' + channel(color.r, 0) + channel(color.g, 0) + channel(color.b, 0) + channel(color.a, 1)
-    }
-
-    function gradientToControlValueJson(value) {
-      const g = typeof value === 'object' && value !== null ? value : {}
-      const stops = Array.isArray(g.stops) ? g.stops : []
-      const pct = (n) => Math.round(Math.max(0, Math.min(1, Number(n))) * 100)
-      return JSON.stringify({
-        type: 'gradient',
-        gradient: {
-          type: g.type || 'linear',
-          angle: Number.isFinite(Number(g.angle)) ? Number(g.angle) : 0,
-          stops: stops.map((s) => ({
-            position: pct(s.position),
-            color: colorToHex(s.color).slice(0, 7),
-            opacity: pct(s.color && s.color.a),
-          })),
-        },
-      })
-    }
-
-    function hasParam(values, name) {
-      return Object.prototype.hasOwnProperty.call(values, name)
-    }
-
-    function setControlValue(id, value) {
-      const input = document.getElementById(id)
-      if (!input) return
-      const next = String(value)
-      input.value = next
-      input.setAttribute('value', next)
-    }
-
-    function setControlChecked(id, value) {
-      const input = document.getElementById(id)
-      if (!input) return
-      input.checked = Boolean(value)
-      if (input.checked) {
-        input.setAttribute('checked', '')
-      } else {
-        input.removeAttribute('checked')
-      }
-    }
-
-    function setPanelParams(values) {
-      if (typeof values !== 'object' || values === null) return
-      if (hasParam(values, "urlLink")) setControlValue("urlLink", values.urlLink)
-    }
-
     function currentParams() {
       return {
         urlLink: String(document.getElementById('urlLink').value),
       }
     }
+
+    function setControlValue(id, value) {
+      const input = document.getElementById(id)
+      if (!input) return
+      input.value = String(value)
+    }
+
+    function setPanelParams(values) {
+      if (typeof values !== 'object' || values === null) return
+      if (Object.prototype.hasOwnProperty.call(values, 'urlLink')) {
+        setControlValue('urlLink', values.urlLink)
+      }
+    }
+
     document.getElementById('action-apply').addEventListener('click', () => {
-      parent.postMessage({ pluginMessage: { type: 'action', id: "apply", params: currentParams() } }, '*')
+      parent.postMessage({ pluginMessage: { type: 'action', id: 'apply', params: currentParams() } }, '*')
     })
+
     document.getElementById('action-read').addEventListener('click', () => {
-      parent.postMessage({ pluginMessage: { type: 'action', id: "read", params: currentParams() } }, '*')
+      parent.postMessage({ pluginMessage: { type: 'action', id: 'read', params: currentParams() } }, '*')
+    })
+
+    document.getElementById('action-remove').addEventListener('click', () => {
+      parent.postMessage({ pluginMessage: { type: 'action', id: 'remove', params: currentParams() } }, '*')
     })
 
     window.onmessage = (event) => {
       const msg = event.data && event.data.pluginMessage
       if (!msg) return
+
       if (msg.type === 'params-change') {
         setPanelParams(msg.params)
         return
       }
+
+      if (msg.type === 'action-state' && msg.actions) {
+        const applyAction = msg.actions['apply']
+        const applyBtn = document.getElementById('action-apply')
+        if (applyAction && applyBtn) {
+          if (applyAction.enabled === false) applyBtn.setAttribute('disabled', '')
+          else applyBtn.removeAttribute('disabled')
+          if (typeof applyAction.label === 'string') applyBtn.textContent = applyAction.label
+        }
+        const applyStatus = document.getElementById('status-apply')
+        if (applyAction && applyStatus && typeof applyAction.status === 'string') {
+          applyStatus.textContent = applyAction.status
+        }
+
+        const removeAction = msg.actions['remove']
+        const removeBtn = document.getElementById('action-remove')
+        if (removeAction && removeBtn) {
+          if (removeAction.enabled === false) removeBtn.setAttribute('disabled', '')
+          else removeBtn.removeAttribute('disabled')
+          if (typeof removeAction.label === 'string') removeBtn.textContent = removeAction.label
+        }
+
+        const readAction = msg.actions['read']
+        const readBtn = document.getElementById('action-read')
+        if (readAction && readBtn) {
+          if (readAction.enabled === false) readBtn.setAttribute('disabled', '')
+          else readBtn.removeAttribute('disabled')
+          if (typeof readAction.label === 'string') readBtn.textContent = readAction.label
+        }
+      }
     }
 
-
-    window.addEventListener('message', (event) => {
-      const msg = event.data && event.data.pluginMessage
-      if (!msg || msg.type !== 'action-state' || !msg.actions) return
-      {
-        const a = msg.actions["apply"]
-        const button = document.getElementById('action-apply')
-        if (a && button) {
-          if (a.enabled === false) button.setAttribute('disabled', '')
-          else button.removeAttribute('disabled')
-          if (typeof a.label === 'string') button.textContent = a.label
-        }
-        const status = document.getElementById('status-apply')
-        if (a && status && typeof a.status === 'string') status.textContent = a.status
+    // Report height for iframe resize
+    let lastH = 0
+    function reportHeight() {
+      const h = Math.ceil(document.body.getBoundingClientRect().height)
+      if (h && h !== lastH) {
+        lastH = h
+        parent.postMessage({ pluginMessage: { type: 'resize', height: h } }, '*')
       }
-      {
-        const a = msg.actions["read"]
-        const button = document.getElementById('action-read')
-        if (a && button) {
-          if (a.enabled === false) button.setAttribute('disabled', '')
-          else button.removeAttribute('disabled')
-          if (typeof a.label === 'string') button.textContent = a.label
-        }
-        const status = document.getElementById('status-read')
-        if (a && status && typeof a.status === 'string') status.textContent = a.status
-      }
-    })
-
+    }
+    if (typeof ResizeObserver !== 'undefined') {
+      new ResizeObserver(reportHeight).observe(document.body)
+    }
   </script>
 </body>
 </html>

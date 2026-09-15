@@ -1,10 +1,12 @@
+/// <reference path="node_modules/@figma/plugin-typings/index.d.ts" />
+
 type Params = { urlLink: string }
 type Attachment = { version: 1; params: Params; state: unknown | null }
 type RunMsg =
   | { type: 'action'; id: string; params: Partial<Params> }
   | { type: 'resize'; height: number }
 const TOOL_ID = "1f70c4c5-f80c-45aa-8d17-9b42f7ea6b7f"
-const DISPLAY_NAME = "SVG URL link"
+const DISPLAY_NAME = "PV diagram URL link"
 const ATTACH_KEY = TOOL_ID + ':state'
 const DEFAULTS: Params = { urlLink: "/product/" }
 let latestParams: Params = DEFAULTS
@@ -79,6 +81,21 @@ function actionTarget_read(): SceneNode | null {
   if (target == null) return null
   return evaluateEnabled_read([target]) ? target : null
 }
+function evaluateEnabled_remove(selection: readonly SceneNode[]): boolean {
+  if (selection.length !== 1) return false
+  const node = selection[0]
+  if (node == null) return false
+  return node.getSharedPluginData("tidata", "url_link") !== ""
+}
+function actionTarget_remove(): SceneNode | null {
+  const target = singleSelectedTarget()
+  if (target == null) return null
+  return evaluateEnabled_remove([target]) ? target : null
+}
+function status_remove(selection: readonly SceneNode[], enabled: boolean): string {
+  if (selection.length !== 1) return "Select a layer"
+  return enabled ? "Has link data" : "No link data"
+}
 async function action_apply(params: Params, target: SceneNode, _previousState: unknown | null): Promise<{ affectedNodes: SceneNode[]; state: unknown | null }> {
   const affectedNodes: SceneNode[] = [target]
   ;(() => {
@@ -99,6 +116,14 @@ async function action_read(_params: Params, target: SceneNode, _previousState: u
   })()
   return { affectedNodes, state: null }
 }
+async function action_remove(_params: Params, target: SceneNode, _previousState: unknown | null): Promise<{ affectedNodes: SceneNode[]; state: unknown | null }> {
+  const affectedNodes: SceneNode[] = [target]
+  target.setSharedPluginData("tidata", "url_link", "")
+  target.setPluginData(ATTACH_KEY, "")
+  target.setRelaunchData({})
+  figma.notify('Link removed from "' + target.name + '"')
+  return { affectedNodes, state: null }
+}
 async function runAction_apply(target: SceneNode, notify: boolean): Promise<void> {
   isExecuting = true
   try {
@@ -111,6 +136,22 @@ async function runAction_apply(target: SceneNode, notify: boolean): Promise<void
       if (created.length > 0) {
         figma.viewport.scrollAndZoomIntoView(created)
       }
+      figma.notify(DISPLAY_NAME + " ran")
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    figma.notify(message, { error: true })
+    throw error
+  } finally {
+    isExecuting = false
+  }
+}
+async function runAction_remove(target: SceneNode, notify: boolean): Promise<void> {
+  isExecuting = true
+  try {
+    await action_remove(latestParams, target, null)
+    pushActionStates()
+    if (notify) {
       figma.notify(DISPLAY_NAME + " ran")
     }
   } catch (error) {
@@ -151,11 +192,14 @@ function pushActionStates(): void {
   const enabled_apply = t_apply != null
   const t_read = actionTarget_read()
   const enabled_read = t_read != null
+  const t_remove = actionTarget_remove()
+  const enabled_remove = t_remove != null
   figma.ui.postMessage({
     type: 'action-state',
     actions: {
       "apply": { enabled: enabled_apply, label: "Apply data", status: status_apply(selection, enabled_apply) },
       "read": { enabled: enabled_read, label: "Read data", status: undefined },
+      "remove": { enabled: enabled_remove, label: "Remove link", status: status_remove(selection, enabled_remove) },
     },
   })
 }
@@ -208,6 +252,12 @@ figma.ui.onmessage = (msg: RunMsg) => {
       if (target == null) return
       latestParams = normalizeParams(msg.params)
       void runAction_read(target, true)
+      return
+    }
+    if (msg.id === "remove") {
+      const target = actionTarget_remove()
+      if (target == null) return
+      void runAction_remove(target, true)
       return
     }
     return
